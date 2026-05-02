@@ -1,4 +1,4 @@
-"""Domain-aware edges for PipelineState[T] fan-out and join.
+"""Domain-aware edges and helper nodes for PipelineState[T] fan-out and join.
 
 These complement llm_framework's generic edges. They understand PipelineState's
 fan_n/fan_i coordination protocol so llm_framework can remain state-agnostic.
@@ -11,6 +11,19 @@ from typing import Any
 from llm_framework.workflow import Edge, Node
 
 from .context import PipelinePayload, PipelineState
+
+
+class PassThroughNode(Node):
+    """Identity node — returns its input unchanged.
+
+    Used as a wiring helper between a ConditionalEdge (which decides the route)
+    and a PipelineStateFanOutEdge (which handles fan-out). Keeping them separate
+    preserves single-responsibility: the conditional edge routes, the fan-out edge
+    fans.
+    """
+
+    async def execute(self, input: Any) -> Any:  # noqa: A002
+        return input
 
 
 class PipelineStateFanOutEdge(Edge):
