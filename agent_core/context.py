@@ -107,11 +107,19 @@ class PRLockManager:
     def __init__(self) -> None:
         self._locks: dict[tuple[int, int], asyncio.Lock] = {}
 
-    def __call__(self, installation_id: int, pr_number: int) -> asyncio.Lock:
+    @asynccontextmanager
+    async def __call__(self, installation_id: int, pr_number: int) -> AsyncIterator[None]:
         key = (installation_id, pr_number)
         if key not in self._locks:
             self._locks[key] = asyncio.Lock()
-        return self._locks[key]
+        lock = self._locks[key]
+        await lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
+            if not lock.locked() and key in self._locks:
+                self._locks.pop(key, None)
 
 
 @dataclass(frozen=True)

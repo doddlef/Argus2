@@ -284,14 +284,15 @@ async def _compact(
 
 def _parse_compaction_file(content: str) -> tuple[str | None, str]:
     """Parse a compaction file. Returns (last_comment_id, summary_text)."""
-    if not content.startswith("---"):
+    if not content.startswith("---\n"):
         return None, content.strip()
 
-    parts = content.split("---", 2)
-    if len(parts) < 3:
+    end = content.find("\n---\n", 4)
+    if end == -1:
         return None, content.strip()
 
-    frontmatter, body = parts[1], parts[2].strip()
+    frontmatter = content[4:end]
+    body = content[end + 5 :].strip()
 
     last_comment_id: str | None = None
     for line in frontmatter.splitlines():

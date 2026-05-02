@@ -21,6 +21,7 @@ WikiMerge scans tmp/ recursively for matching files and applies them to canonica
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Tuple
 
 from llm_framework import BoundTool
 
@@ -34,6 +35,22 @@ def _project_root(wiki_root: Path) -> Path:
     ctx = get_session()
     owner, repo_name = ctx.repo.split("/", 1)
     return wiki_root / "argus" / owner / repo_name
+
+
+def _resolve_safe_wiki_path(project: Path, raw_path: str) -> Tuple[Path | None, str | None]:
+    """Resolve a wiki page path and ensure it stays within project root."""
+    path = Path(raw_path)
+    if path.is_absolute():
+        return None, "Error: path must be relative to the project wiki root."
+
+    candidate = (project / path).resolve(strict=False)
+    project_resolved = project.resolve(strict=False)
+    try:
+        candidate.relative_to(project_resolved)
+    except ValueError:
+        return None, "Error: path escapes project wiki root."
+
+    return candidate, None
 
 
 def _update_index(project: Path, path: str, description: str) -> None:
@@ -113,7 +130,11 @@ class _MemReadTool(BoundTool):
         self._wiki_root = wiki_root
 
     async def process(self, arguments: dict) -> str:
-        page_path = _project_root(self._wiki_root) / arguments["path"]
+        project = _project_root(self._wiki_root)
+        page_path, err = _resolve_safe_wiki_path(project, arguments["path"])
+        if err:
+            return err
+        assert page_path is not None
         if not page_path.exists():
             return f"Error: wiki page {arguments['path']!r} does not exist."
         return page_path.read_text(encoding="utf-8")
@@ -137,7 +158,10 @@ class _MemWriteTool(BoundTool):
         description = arguments["description"]
 
         project = _project_root(self._wiki_root)
-        page_path = project / path
+        page_path, err = _resolve_safe_wiki_path(project, path)
+        if err:
+            return err
+        assert page_path is not None
         page_path.parent.mkdir(parents=True, exist_ok=True)
         page_path.write_text(content, encoding="utf-8")
         _update_index(project, path, description)
@@ -162,7 +186,10 @@ class _MemAppendTool(BoundTool):
         description = arguments["description"]
 
         project = _project_root(self._wiki_root)
-        page_path = project / path
+        page_path, err = _resolve_safe_wiki_path(project, path)
+        if err:
+            return err
+        assert page_path is not None
         page_path.parent.mkdir(parents=True, exist_ok=True)
         existing = page_path.read_text(encoding="utf-8") if page_path.exists() else ""
         page_path.write_text(existing + ("\n" if existing else "") + content, encoding="utf-8")
@@ -197,6 +224,9 @@ class _WrappedMemWriteTool(BoundTool):
         description = arguments["description"]
 
         project = _project_root(self._wiki_root)
+        _validated, err = _resolve_safe_wiki_path(project, path)
+        if err:
+            return err
         tmp_path = project / "tmp" / f"pr{self._pr_number}-{self._run_id}" / path
         tmp_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -235,6 +265,9 @@ class _WrappedMemAppendTool(BoundTool):
         description = arguments["description"]
 
         project = _project_root(self._wiki_root)
+        _validated, err = _resolve_safe_wiki_path(project, path)
+        if err:
+            return err
         tmp_path = project / "tmp" / f"pr{self._pr_number}-{self._run_id}" / path
         tmp_path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -16,12 +16,21 @@ from typing import Literal
 import pytest
 
 from agent_core.config import ArgusConfig, ClientConfig
-from agent_core.context import ApplicationContext, ClientTier, PRLockManager, PipelinePayload, PipelineState
+from agent_core.context import (
+    ApplicationContext,
+    ClientTier,
+    PRLockManager,
+    PipelinePayload,
+    PipelineState,
+    SessionContext,
+    session,
+)
 from agent_core.dispatcher import CommentReceivedTrigger, Dispatcher, PROpenedTrigger
 from agent_core.domain import ChangedFile, Commit, Comment, InlineComment, PRMetadata
 from agent_core.edges import PassThroughNode, PipelineStateFanOutEdge, PipelineStateJoinEdge
 from agent_core.nodes.analysis import AnalysisNode, RouteNode, TriageNode
 from agent_core.nodes.conversation import ConversationNode
+from agent_core.nodes.loading import _parse_compaction_file
 from agent_core.nodes.loading import (
     AcknowledgeNode,
     MemLoadNode,
@@ -32,6 +41,7 @@ from agent_core.nodes.loading import (
 from agent_core.nodes.output import SummaryNode, WikiMergeNode
 from agent_core.pipelines import build_comment_workflow, build_pr_workflow
 from agent_core.ports import CodeReader, Commenter
+from agent_core.tools.memory import make_analysis_memory_tools, make_memory_tools
 from llm_framework.client import LLMClient
 from llm_framework.edges import ConditionalEdge, DirectedEdge
 from llm_framework.responses import LLMResponse
@@ -433,3 +443,86 @@ async def test_comment_analysis_branch_zero_plans_approves(tmp_path):
     assert len(commenter.posted_reviews) == 1
     _, verdict, _ = commenter.posted_reviews[0]
     assert verdict == "approve"
+
+
+async def test_triage_malformed_plan_payload_falls_back_to_zero_plan(tmp_path):
+    commenter = MockCommenter()
+    trigger = _pr_trigger(commenter, tmp_path)
+    bad_plan = {"files": "src/auth.py", "focus": "auth"}  # invalid shape
+    app_ctx = _make_app_ctx(
+        tmp_path,
+        fast=[_triage_resp([bad_plan])],
+        standard=[_text_resp("Fallback summary path.")],
+    )
+    await Dispatcher(app_ctx).dispatch(trigger)
+    assert len(commenter.posted_reviews) == 1
+    _, verdict, _ = commenter.posted_reviews[0]
+    assert verdict == "approve"
+
+
+async def test_memory_tools_reject_path_escape(tmp_path):
+    app_ctx = _make_app_ctx(tmp_path)
+    commenter = MockCommenter()
+    trigger = _pr_trigger(commenter, tmp_path)
+    ctx = SessionContext(
+        installation_id=trigger.installation_id,
+        repo=trigger.repo,
+        pr_number=trigger.pr_number,
+        commit_sha=trigger.commit_sha,
+        actor=trigger.actor,
+        reader=trigger.reader,
+        commenter=trigger.commenter,
+        metadata=await trigger.reader.fetch_pr_metadata(trigger.pr_number),
+    )
+    async with session(ctx):
+        tools = {t.name: t for t in make_memory_tools(app_ctx.wiki_root)}
+        err = await tools["memory_write"].process(
+            {"path": "../escape.md", "content": "x", "description": "x"}
+        )
+        assert "escapes project wiki root" in err
+
+
+async def test_analysis_memory_tools_reject_path_escape(tmp_path):
+    app_ctx = _make_app_ctx(tmp_path)
+    commenter = MockCommenter()
+    trigger = _pr_trigger(commenter, tmp_path)
+    ctx = SessionContext(
+        installation_id=trigger.installation_id,
+        repo=trigger.repo,
+        pr_number=trigger.pr_number,
+        commit_sha=trigger.commit_sha,
+        actor=trigger.actor,
+        reader=trigger.reader,
+        commenter=trigger.commenter,
+        metadata=await trigger.reader.fetch_pr_metadata(trigger.pr_number),
+    )
+    async with session(ctx):
+        tools = {t.name: t for t in make_analysis_memory_tools(app_ctx.wiki_root, 1, "runid")}
+        err = await tools["memory_append"].process(
+            {"path": "/abs.md", "content": "x", "description": "x"}
+        )
+        assert "relative" in err
+
+
+def test_parse_compaction_file_handles_body_with_markers():
+    content = (
+        '---\nlast_comment_id: "c123"\ncompacted_at_sha: abc\n---\n\n'
+        "Summary line\n---\nmore body\n"
+    )
+    last, body = _parse_compaction_file(content)
+    assert last == "c123"
+    assert "Summary line" in body
+    assert "more body" in body
+
+
+def test_parse_compaction_file_malformed_frontmatter_falls_back():
+    last, body = _parse_compaction_file("---\nno closing marker")
+    assert last is None
+    assert body == "---\nno closing marker"
+
+
+async def test_pr_lock_manager_evicts_released_lock():
+    mgr = PRLockManager()
+    async with mgr(1, 1):
+        assert (1, 1) in mgr._locks
+    assert (1, 1) not in mgr._locks

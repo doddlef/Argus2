@@ -260,7 +260,7 @@ class TriageNode(Node):
 
         if submit.captured is not None:
             raw_plans = submit.captured[: self._max_plans]
-            plans = [_parse_plan(p) for p in raw_plans]
+            plans = _parse_plans(raw_plans)
         else:
             logger.warning("Triage did not call submit_plans — returning empty plan list")
 
@@ -525,14 +525,39 @@ async def _dispatch_tool(tool_index: dict[str, BoundTool], call: ToolCall) -> To
         return ToolResult(id=call.id, content=str(exc), is_error=True)
 
 
-def _parse_plan(raw: dict) -> Plan:
-    return Plan(
-        files=raw["files"],
-        focus=raw["focus"],
-        guidance=raw["guidance"],
-        tier=raw["tier"],
-        preload_diffs=raw["preload_diffs"],
-    )
+def _parse_plans(raw_plans: list[dict]) -> list[Plan]:
+    plans: list[Plan] = []
+    for i, raw in enumerate(raw_plans):
+        try:
+            files = raw.get("files")
+            focus = raw.get("focus")
+            guidance = raw.get("guidance")
+            tier = raw.get("tier")
+            preload_diffs = raw.get("preload_diffs")
+
+            if (
+                not isinstance(files, list)
+                or not all(isinstance(f, str) for f in files)
+                or not isinstance(focus, str)
+                or not isinstance(guidance, str)
+                or tier not in {"fast", "standard", "deep"}
+                or not isinstance(preload_diffs, bool)
+            ):
+                logger.warning("Dropping invalid triage plan at index %d: %r", i, raw)
+                continue
+
+            plans.append(
+                Plan(
+                    files=files,
+                    focus=focus,
+                    guidance=guidance,
+                    tier=tier,
+                    preload_diffs=preload_diffs,
+                )
+            )
+        except Exception:
+            logger.warning("Dropping malformed triage plan at index %d", i, exc_info=True)
+    return plans
 
 
 def _parse_report(plan: Plan, raw: dict) -> AnalysisReport:
