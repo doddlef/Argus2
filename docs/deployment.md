@@ -15,37 +15,66 @@ It is written for the current codebase shape and env variables.
 - A reachable HTTPS URL for GitHub webhooks (local tunnel for dev)
 - Valid LLM API credentials for all configured tiers
 
-## 2) Required Environment Variables
+## 2) Parameter Reference
 
-### GitHub connector
+This section documents each runtime parameter, what it is used for, and where it is consumed.
 
-- `GITHUB_APP_ID`
-- `GITHUB_WEBHOOK_SECRET`
-- `GITHUB_APP_PRIVATE_KEY_PEM` **or** `GITHUB_APP_PRIVATE_KEY_PATH`
-- `ARGUS_STATE_DB_PATH`
+### GitHub connect layer
 
-`GITHUB_APP_PRIVATE_KEY_PEM` has precedence over `GITHUB_APP_PRIVATE_KEY_PATH`.
+| Parameter | Required | Used for |
+|---|---|---|
+| `GITHUB_APP_ID` | Yes | GitHub App issuer ID used to mint JWT (`github_connect/auth.py`) |
+| `GITHUB_WEBHOOK_SECRET` | Yes | Verifies `X-Hub-Signature-256` webhook HMAC (`github_connect/server.py`) |
+| `GITHUB_APP_PRIVATE_KEY_PEM` | Yes* | PEM private key content used to sign app JWT (`github_connect/auth.py`) |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | Yes* | File path to PEM key if not using inline env value (`github_connect/auth.py`) |
+| `ARGUS_STATE_DB_PATH` | Yes | SQLite file path for webhook idempotency/status state (`github_connect/state_store.py`) |
 
-### Argus core config (minimum)
+\* Provide one of `GITHUB_APP_PRIVATE_KEY_PEM` or `GITHUB_APP_PRIVATE_KEY_PATH`. If both are set, `..._PEM` wins.
 
-- `ARGUS_WIKI_ROOT`
-- `ARGUS_BOT_USERNAME`
-- `ARGUS_FAST_API_KEY`
-- `ARGUS_STANDARD_API_KEY`
-- `ARGUS_DEEP_API_KEY`
+### Agent core + model routing
 
-Optional:
+| Parameter | Required | Used for |
+|---|---|---|
+| `ARGUS_CONFIG_PATH` | No | Path to TOML config; default `/etc/argus/config.toml` (`agent_core/config.py`) |
+| `ARGUS_WIKI_ROOT` | Yes (unless in TOML) | Root folder for memory/wiki files (`agent_core/config.py`) |
+| `ARGUS_BOT_USERNAME` | Yes (unless in TOML) | Bot identity for self-comment filtering and behavior (`agent_core/config.py`) |
+| `ARGUS_REVIEW_DRAFTS` | No | Enable/disable review on draft PRs (bool) |
+| `ARGUS_ACKNOWLEDGE_EVENTS` | No | Enable/disable lightweight acknowledgement comments (bool) |
+| `ARGUS_VERDICT_THRESHOLD` | No | Minimum severity for verdict decisions (`critical/high/medium`) |
 
-- `ARGUS_CONFIG_PATH` (if using TOML config file)
-- `ARGUS_REVIEW_DRAFTS`
-- `ARGUS_ACKNOWLEDGE_EVENTS`
-- limits/review vars (see `agent_core/config.py`)
+### Per-tier LLM credentials
 
-### OpenRouter-specific (if provider is `openrouter`)
+| Parameter | Required | Used for |
+|---|---|---|
+| `ARGUS_FAST_API_KEY` | Yes (unless in TOML) | API key for fast tier |
+| `ARGUS_STANDARD_API_KEY` | Yes (unless in TOML) | API key for standard tier |
+| `ARGUS_DEEP_API_KEY` | Yes (unless in TOML) | API key for deep tier |
+| `ARGUS_FAST_PROVIDER` / `ARGUS_STANDARD_PROVIDER` / `ARGUS_DEEP_PROVIDER` | No | Provider override per tier (`anthropic`, `ollama`, `openrouter`) |
+| `ARGUS_FAST_MODEL` / `ARGUS_STANDARD_MODEL` / `ARGUS_DEEP_MODEL` | No | Model override per tier |
 
-- `OPENROUTER_BASE_URL` (optional, default `https://openrouter.ai/api/v1`)
-- `OPENROUTER_APP_NAME` (optional; sent as `X-Title`)
-- `OPENROUTER_APP_URL` (optional; sent as `HTTP-Referer`)
+### OpenRouter-specific (only when provider=`openrouter`)
+
+| Parameter | Required | Used for |
+|---|---|---|
+| `OPENROUTER_BASE_URL` | No | OpenRouter API base URL (default `https://openrouter.ai/api/v1`) |
+| `OPENROUTER_APP_NAME` | No | Sent as `X-Title` request header |
+| `OPENROUTER_APP_URL` | No | Sent as `HTTP-Referer` request header |
+
+### Ollama-specific (only when provider=`ollama`)
+
+| Parameter | Required | Used for |
+|---|---|---|
+| `ARGUS_OLLAMA_HOST` | No | Ollama host URL (default `http://localhost:11434`) |
+
+### Limits / tuning (optional)
+
+All are optional and can be set in TOML (`[limits]`) or env:
+- `ARGUS_MAX_PLANS`
+- `ARGUS_MAX_INLINE_SUGGESTIONS`
+- `ARGUS_MAX_SEARCH_RESULTS`
+- `ARGUS_MAX_FILE_WINDOW_LINES`
+- `ARGUS_THREAD_COMPACT_THRESHOLD`
+- `ARGUS_PRELOAD_DIFF_THRESHOLD`
 
 ### Recommended TOML pattern (per-tier models, env secrets)
 
@@ -122,12 +151,17 @@ python -m pip install fastapi uvicorn anthropic ollama openai
 4. Configure GitHub App webhook URL:
    - `https://<tunnel-domain>/webhooks/github`
 5. In GitHub App settings:
-   - set webhook secret to match `GITHUB_WEBHOOK_SECRET`
+   - set **Webhook secret** to match `GITHUB_WEBHOOK_SECRET`
    - subscribe to:
      - `Pull requests`
      - `Issue comments`
      - `Pull request review comments`
-6. Install app on a test repository and trigger events:
+   - install the app to your target repo/org
+6. Copy values from GitHub App settings into runtime config:
+   - **App ID** -> `GITHUB_APP_ID`
+   - **Private key (.pem)** -> `GITHUB_APP_PRIVATE_KEY_PATH` (or paste into `GITHUB_APP_PRIVATE_KEY_PEM`)
+   - **Webhook secret** -> `GITHUB_WEBHOOK_SECRET`
+7. Trigger events:
    - open PR
    - push commit to PR
    - comment on PR

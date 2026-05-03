@@ -5,8 +5,9 @@ Resolution order per parameter (highest to lowest priority):
   2. TOML file at ARGUS_CONFIG_PATH (or /etc/argus/config.toml if unset)
   3. Coded default
 
-Required fields (wiki_root, bot_username, per-client api_key) raise ValueError
-if absent from both env and TOML. Model has a coded default; api_key does not.
+Required fields (wiki_root, bot_username) raise ValueError if absent from both
+env and TOML. Per-client api_key is required for providers that need it
+(anthropic/openrouter), and optional for ollama.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ _DEFAULT_MODELS: dict[str, str] = {
 class ClientConfig:
     provider: str
     model: str
-    api_key: str  # required — ARGUS_{TIER}_API_KEY env var or [clients.{tier}] api_key
+    api_key: str
 
 
 @dataclass(frozen=True)
@@ -140,15 +141,16 @@ def _load_client(raw: dict, tier: str) -> ClientConfig:
             return toml_val
         return default
 
-    api_key = get("api_key", f"ARGUS_{tier_upper}_API_KEY")
-    if not api_key:
+    provider = str(get("provider", f"ARGUS_{tier_upper}_PROVIDER", "anthropic")).lower()
+    api_key = get("api_key", f"ARGUS_{tier_upper}_API_KEY", "")
+    if provider in {"anthropic", "openrouter"} and not api_key:
         raise ValueError(
             f"clients.{tier} api_key is required — "
             f"set [clients.{tier}] api_key in config or ARGUS_{tier_upper}_API_KEY env"
         )
 
     return ClientConfig(
-        provider=get("provider", f"ARGUS_{tier_upper}_PROVIDER", "anthropic"),
+        provider=provider,
         model=get("model", f"ARGUS_{tier_upper}_MODEL", _DEFAULT_MODELS[tier]),
         api_key=api_key,
     )

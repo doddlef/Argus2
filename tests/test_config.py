@@ -171,3 +171,28 @@ def test_all_three_api_keys_resolved(required_env, tmp_path):
     assert cfg.fast_client.api_key == "fast-key"
     assert cfg.standard_client.api_key == "standard-key"
     assert cfg.deep_client.api_key == "deep-key"
+
+
+def test_ollama_provider_allows_missing_api_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_WIKI_ROOT", "/tmp/wiki")
+    monkeypatch.setenv("ARGUS_BOT_USERNAME", "argus-bot")
+    monkeypatch.setenv("ARGUS_FAST_PROVIDER", "ollama")
+    monkeypatch.delenv("ARGUS_FAST_API_KEY", raising=False)
+    monkeypatch.setenv("ARGUS_STANDARD_API_KEY", "standard-key")
+    monkeypatch.setenv("ARGUS_DEEP_API_KEY", "deep-key")
+
+    cfg = load_config(tmp_path / "none.toml")
+    assert cfg.fast_client.provider == "ollama"
+    assert cfg.fast_client.api_key == ""
+
+
+def test_openrouter_provider_requires_api_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_WIKI_ROOT", "/tmp/wiki")
+    monkeypatch.setenv("ARGUS_BOT_USERNAME", "argus-bot")
+    monkeypatch.setenv("ARGUS_FAST_PROVIDER", "openrouter")
+    monkeypatch.delenv("ARGUS_FAST_API_KEY", raising=False)
+    monkeypatch.setenv("ARGUS_STANDARD_API_KEY", "standard-key")
+    monkeypatch.setenv("ARGUS_DEEP_API_KEY", "deep-key")
+
+    with pytest.raises(ValueError, match="clients.fast"):
+        load_config(tmp_path / "none.toml")

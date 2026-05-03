@@ -1,25 +1,50 @@
+# Argus runtime configuration template
+#
+# How to use:
+# 1. Copy this file to your runtime path, e.g. /etc/argus/config.toml
+# 2. Set ARGUS_CONFIG_PATH to that file (or keep default /etc/argus/config.toml)
+# 3. Fill required blanks below.
+#
+# IMPORTANT:
+# - GitHub connector secrets (App ID, webhook secret, private key) are ENV VARS,
+#   not read from this TOML by current code.
+# - You can keep API keys in env (recommended) or fill api_key values below.
+
 [argus]
+# Required: absolute path for wiki/memory storage (must be writable)
 wiki_root = ""
+
+# Required: bot login/username used by Argus
 bot_username = ""
+
+# Optional: review draft PRs
 review_drafts = false
+
+# Optional: post acknowledgement comment on accepted events
 acknowledge_events = true
 
 [clients.fast]
+# Required: provider in {"anthropic", "ollama", "openrouter"}
 provider = "openrouter"
+# Required: model id for this tier
 model = ""
+# Optional in TOML if ARGUS_FAST_API_KEY is provided via env
 api_key = ""
 
 [clients.standard]
 provider = "openrouter"
 model = ""
+# Optional in TOML if ARGUS_STANDARD_API_KEY is provided via env
 api_key = ""
 
 [clients.deep]
 provider = "openrouter"
 model = ""
+# Optional in TOML if ARGUS_DEEP_API_KEY is provided via env
 api_key = ""
 
 [limits]
+# Optional tuning knobs
 max_plans = 5
 max_inline_suggestions = 10
 max_search_results = 20
@@ -28,4 +53,17 @@ thread_compact_threshold = 10
 preload_diff_threshold = 300
 
 [review]
+# Optional: one of {"critical", "high", "medium"}
 verdict_threshold = "high"
+
+# ---------------------------------------------------------------------------
+# GitHub connector values (DOCUMENTATION ONLY; configure as environment vars)
+# ---------------------------------------------------------------------------
+#
+# GITHUB_APP_ID=""
+# GITHUB_WEBHOOK_SECRET=""
+# GITHUB_APP_PRIVATE_KEY_PATH=""   # path to downloaded GitHub App .pem file
+# OR
+# GITHUB_APP_PRIVATE_KEY_PEM=""    # inline PEM content
+#
+# ARGUS_STATE_DB_PATH=""           # sqlite db path for webhook dedupe/status
