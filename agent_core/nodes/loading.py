@@ -36,8 +36,16 @@ class PRLoadNode(Node):
 
     async def execute(self, _state: Any) -> PipelineState[None]:
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=PRLoad start", key)
         commits = await ctx.reader.fetch_commits(ctx.pr_number)
         changed_files = await ctx.reader.fetch_changed_files(ctx.pr_number)
+        logger.info(
+            "%s node=PRLoad done commits=%d changed_files=%d",
+            key,
+            len(commits),
+            len(changed_files),
+        )
         return PipelineState(
             payload=PipelinePayload(commits=commits, changed_files=changed_files),
             data=None,
@@ -63,8 +71,11 @@ class AcknowledgeNode(Node):
         if not self._enabled:
             return state
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=Acknowledge start enabled=true", key)
         try:
             await ctx.commenter.post_comment(ctx.pr_number, self._message)
+            logger.info("%s node=Acknowledge done posted=true", key)
         except Exception as exc:
             logger.warning("Acknowledge failed (non-critical): %s", exc)
         return state
@@ -82,11 +93,19 @@ class MemLoadNode(Node):
 
     async def execute(self, state: PipelineState[None]) -> PipelineState[None]:
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=MemLoad start", key)
         owner, repo_name = ctx.repo.split("/", 1)
         project = self._wiki_root / "argus" / owner / repo_name
 
         state.payload.wiki_index = _read_optional(project / "index.md")
         state.payload.wiki_structure = _read_optional(project / "structure.md")
+        logger.info(
+            "%s node=MemLoad done has_index=%s has_structure=%s",
+            key,
+            bool(state.payload.wiki_index),
+            bool(state.payload.wiki_structure),
+        )
         return state
 
 
@@ -103,9 +122,12 @@ class TreeLoadNode(Node):
 
     async def execute(self, state: PipelineState[None]) -> PipelineState[None]:
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=TreeLoad start", key)
         try:
             paths = await ctx.reader.fetch_tree(ctx.commit_sha)
             state.payload.file_tree = _build_file_tree(paths)
+            logger.info("%s node=TreeLoad done tree_paths=%d", key, len(paths))
         except Exception as exc:
             logger.warning("TreeLoad failed — list/search degraded for this run: %s", exc)
         return state
@@ -195,6 +217,8 @@ class ThreadLoadNode(Node):
 
     async def execute(self, state: PipelineState[None]) -> PipelineState[None]:
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=ThreadLoad start", key)
         thread_file = self._thread_file(ctx.repo, ctx.pr_number)
 
         last_comment_id: str | None = None
@@ -214,6 +238,13 @@ class ThreadLoadNode(Node):
 
         # Filter Argus's own acknowledgment comments before compaction
         non_bot = [c for c in new_comments if c.author != self._bot_username]
+        logger.info(
+            "%s node=ThreadLoad fetched new_comments=%d non_bot=%d threshold=%d",
+            key,
+            len(new_comments),
+            len(non_bot),
+            self._threshold,
+        )
 
         if len(non_bot) > self._threshold:
             try:
@@ -227,12 +258,23 @@ class ThreadLoadNode(Node):
                 )
                 state.payload.thread_summary = summary
                 state.payload.recent_comments = []
+                logger.info(
+                    "%s node=ThreadLoad compacted=true recent_comments=%d",
+                    key,
+                    len(state.payload.recent_comments),
+                )
                 return state
             except Exception as exc:
                 logger.warning("Thread compaction failed — using raw comments: %s", exc)
 
         state.payload.thread_summary = existing_summary or None
         state.payload.recent_comments = non_bot
+        logger.info(
+            "%s node=ThreadLoad done compacted=false recent_comments=%d has_summary=%s",
+            key,
+            len(state.payload.recent_comments),
+            bool(state.payload.thread_summary),
+        )
         return state
 
     def _thread_file(self, repo: str, pr_number: int) -> Path:
@@ -243,6 +285,10 @@ class ThreadLoadNode(Node):
             / "pr" / "threads"
             / f"{pr_number}.md"
         )
+
+
+def _run_key(ctx: Any) -> str:
+    return f"{ctx.repo}:{ctx.pr_number}"
 
 
 # ---------------------------------------------------------------------------

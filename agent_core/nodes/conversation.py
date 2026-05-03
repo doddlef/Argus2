@@ -100,6 +100,8 @@ class ConversationNode(Node):
 
     async def execute(self, state: PipelineState[Any]) -> None:
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=Conversation start", key)
         submit_reply = _SubmitReplyTool()
 
         code_tools = make_code_tools(
@@ -146,6 +148,7 @@ class ConversationNode(Node):
         if reply:
             try:
                 await ctx.commenter.post_comment(ctx.pr_number, reply)
+                logger.info("%s node=Conversation done posted=true reply_len=%d", key, len(reply))
             except Exception as exc:
                 logger.exception("Conversation post_comment failed: %s", exc)
         else:
@@ -154,8 +157,13 @@ class ConversationNode(Node):
                     ctx.pr_number,
                     "Argus encountered an error while processing your comment.",
                 )
+                logger.info("%s node=Conversation done posted_fallback=true", key)
             except Exception:
                 pass
+
+
+def _run_key(ctx: Any) -> str:
+    return f"{ctx.repo}:{ctx.pr_number}"
 
 
 # ---------------------------------------------------------------------------

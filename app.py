@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -11,6 +12,15 @@ from llm_framework.client import LLMClient, RetryClient
 from llm_framework.providers.anthropic import AnthropicClient
 from llm_framework.providers.openrouter import OpenRouterClient
 from llm_framework.providers.ollama import OllamaClient
+
+
+def _configure_logging() -> None:
+    level_name = os.environ.get("ARGUS_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
 
 
 def _build_client(cfg: ClientConfig) -> LLMClient:
@@ -34,6 +44,7 @@ def _build_client(cfg: ClientConfig) -> LLMClient:
     raise ValueError(f"Unsupported provider '{cfg.provider}' for model '{cfg.model}'")
 
 
+_configure_logging()
 cfg = load_config()
 
 clients = ClientTier(

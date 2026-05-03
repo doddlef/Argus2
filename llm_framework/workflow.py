@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class Node(ABC):
@@ -33,13 +36,22 @@ class Workflow:
 
     async def _dispatch(self, node: Node, input: Any) -> Any:
         while True:
+            logger.info("workflow node start node=%s", type(node).__name__)
             output = await node.execute(input)
+            logger.info("workflow node done node=%s", type(node).__name__)
 
             edge = self.edges.get(node)
             if edge is None:
+                logger.info("workflow terminal node=%s", type(node).__name__)
                 return output  # terminal node
 
             next_pairs = await edge.route(output)
+            logger.info(
+                "workflow route edge=%s from=%s next_count=%d",
+                type(edge).__name__,
+                type(node).__name__,
+                len(next_pairs),
+            )
 
             if not next_pairs:
                 # Branch terminated silently — used by JoinEdge to gate on
@@ -58,4 +70,5 @@ class Workflow:
                 asyncio.create_task(self._dispatch(n, i))
                 for n, i in next_pairs
             ]
+            logger.info("workflow fanout branches=%d from=%s", len(tasks), type(node).__name__)
             return await asyncio.gather(*tasks)

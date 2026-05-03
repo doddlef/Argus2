@@ -50,8 +50,16 @@ def create_app(
     async def _process_delivery(delivery_id: str, event: str, payload: dict) -> None:
         installation_id = payload.get("installation", {}).get("id")
         repo = payload.get("repository", {}).get("full_name")
+        logger.info(
+            "processing delivery id=%s event=%s repo=%s installation=%s",
+            delivery_id,
+            event,
+            repo,
+            installation_id,
+        )
         translation = translate_event(event=event, payload=payload, bot_username=bot_username)
         if translation.kind == "ignored":
+            logger.info("delivery ignored by translator id=%s event=%s", delivery_id, event)
             state_store.mark_ignored(delivery_id)
             return
 
@@ -64,12 +72,14 @@ def create_app(
             commenter=commenter,
         )
         if trigger is None:
+            logger.info("delivery ignored: no trigger produced id=%s event=%s", delivery_id, event)
             state_store.mark_ignored(delivery_id)
             return
 
         try:
             await dispatcher.dispatch(trigger)
             state_store.mark_processed(delivery_id)
+            logger.info("delivery processed id=%s event=%s", delivery_id, event)
         except Exception as exc:
             logger.exception("Delivery %s failed: %s", delivery_id, exc)
             state_store.mark_failed(delivery_id, str(exc))
@@ -84,10 +94,19 @@ def create_app(
     ) -> dict:
         body = await request.body()
         if not _verify_signature(body, x_hub_signature_256, webhook_secret):
+            logger.warning("webhook rejected: invalid signature")
             raise HTTPException(status_code=401, detail="invalid signature")
         if not x_github_delivery or not x_github_event:
+            logger.warning("webhook rejected: missing github headers")
             raise HTTPException(status_code=400, detail="missing github headers")
         payload = await request.json()
+        logger.info(
+            "webhook received delivery=%s event=%s repo=%s action=%s",
+            x_github_delivery,
+            x_github_event,
+            payload.get("repository", {}).get("full_name"),
+            payload.get("action"),
+        )
         claim = state_store.claim_or_skip(
             delivery_id=x_github_delivery,
             event=x_github_event,
@@ -95,9 +114,20 @@ def create_app(
             repo=payload.get("repository", {}).get("full_name"),
         )
         if claim.action == "skip_processed":
+            logger.info(
+                "webhook duplicate skipped delivery=%s prior_status=%s",
+                x_github_delivery,
+                claim.prior_status,
+            )
             return {"status": "duplicate_skipped"}
         try:
             background_tasks.add_task(_process_delivery, x_github_delivery, x_github_event, payload)
+            logger.info(
+                "delivery enqueued id=%s event=%s prior_status=%s",
+                x_github_delivery,
+                x_github_event,
+                claim.prior_status,
+            )
         except Exception as exc:
             state_store.mark_failed(x_github_delivery, f"enqueue failed: {exc}")
             raise HTTPException(status_code=500, detail="enqueue failed")

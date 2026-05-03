@@ -225,3 +225,6 @@ ignore*
 # configuration
 config.argus.toml
 .env
+
+# database
+/db

@@ -97,6 +97,8 @@ class SummaryNode(Node):
 
     async def execute(self, state: PipelineState[list[AnalysisReport]]) -> None:
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=Summary start reports=%d", key, len(state.data))
         reports: list[AnalysisReport] = state.data
 
         verdict = _compute_verdict(reports, self._threshold)
@@ -136,6 +138,13 @@ class SummaryNode(Node):
 
         try:
             await ctx.commenter.post_review(ctx.pr_number, body, verdict, inline_comments)
+            logger.info(
+                "%s node=Summary done verdict=%s inline_comments=%d total_inline_suggestions=%d",
+                key,
+                verdict,
+                len(inline_comments),
+                total_suggestions,
+            )
         except Exception as exc:
             logger.exception("Summary post_review failed: %s", exc)
             await _post_error_and_cleanup(
@@ -162,12 +171,14 @@ class WikiMergeNode(Node):
 
     async def execute(self, _state: Any) -> None:
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=WikiMerge start", key)
         owner, repo_name = ctx.repo.split("/", 1)
         project = self._wiki_root / "argus" / owner / repo_name
 
         op_files = _scan_operation_files(project, ctx.pr_number)
         if not op_files:
-            logger.debug("WikiMerge: no staged operations for PR #%d", ctx.pr_number)
+            logger.info("%s node=WikiMerge done op_files=0", key)
             return
 
         # Pre-load existing canonical pages so the agent skips memory_read round-trips.
@@ -205,11 +216,21 @@ class WikiMergeNode(Node):
                 history.append(Message.from_tool_results(results))
 
             _delete_op_files(op_files)
+            logger.info(
+                "%s node=WikiMerge done op_files=%d targets=%d",
+                key,
+                len(op_files),
+                len(targets),
+            )
 
         except Exception as exc:
             logger.warning(
                 "WikiMerge failed — operation files preserved for next run: %s", exc
             )
+
+
+def _run_key(ctx: Any) -> str:
+    return f"{ctx.repo}:{ctx.pr_number}"
 
 
 # ---------------------------------------------------------------------------

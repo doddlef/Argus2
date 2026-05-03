@@ -243,6 +243,8 @@ class TriageNode(Node):
 
     async def execute(self, state: PipelineState[None]) -> PipelineState[list[Plan]]:
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=Triage start", key)
         submit = _SubmitPlansTool(self._max_plans)
 
         prompt = _build_triage_prompt(ctx.metadata, state.payload, self._preload_diff_threshold)
@@ -263,6 +265,21 @@ class TriageNode(Node):
             plans = _parse_plans(raw_plans)
         else:
             logger.warning("Triage did not call submit_plans — returning empty plan list")
+        tiers = {"fast": 0, "standard": 0, "deep": 0}
+        preload_count = 0
+        for p in plans:
+            tiers[p.tier] += 1
+            if p.preload_diffs:
+                preload_count += 1
+        logger.info(
+            "%s node=Triage done plans=%d tiers=fast:%d,standard:%d,deep:%d preload_diffs=%d",
+            key,
+            len(plans),
+            tiers["fast"],
+            tiers["standard"],
+            tiers["deep"],
+            preload_count,
+        )
 
         return PipelineState(payload=state.payload, data=plans)
 
@@ -281,6 +298,8 @@ class RouteNode(Node):
     async def execute(self, state: PipelineState[None]) -> PipelineState[RouteDecision]:
         submit = _SubmitDecisionTool()
         ctx = get_session()
+        key = _run_key(ctx)
+        logger.info("%s node=Route start", key)
 
         recent_snippet = "\n".join(
             f"  [{c.author}]: {c.body[:120]}"
@@ -305,6 +324,7 @@ class RouteNode(Node):
         decision: RouteDecision = submit.captured or "conversation"  # type: ignore[assignment]
         if submit.captured is None:
             logger.warning("Route did not call submit_decision — defaulting to 'conversation'")
+        logger.info("%s node=Route done decision=%s", key, decision)
 
         return PipelineState(payload=state.payload, data=decision)
 
@@ -335,7 +355,17 @@ class AnalysisNode(Node):
     async def execute(self, state: PipelineState[Plan]) -> PipelineState[AnalysisReport]:
         plan = state.data
         ctx = get_session()
+        key = _run_key(ctx)
         run_id = uuid.uuid4().hex[:8]
+        logger.info(
+            "%s node=Analysis start run_id=%s focus=%r tier=%s files=%d preload_diffs=%s",
+            key,
+            run_id,
+            plan.focus,
+            plan.tier,
+            len(plan.files),
+            plan.preload_diffs,
+        )
 
         client = {
             "fast": self._clients.fast,
@@ -402,6 +432,15 @@ class AnalysisNode(Node):
             report = AnalysisReport(
                 plan=plan, findings="", severity="none", failed=True, error=str(exc)
             )
+        logger.info(
+            "%s node=Analysis done run_id=%s focus=%r severity=%s inline_suggestions=%d failed=%s",
+            key,
+            run_id,
+            plan.focus,
+            report.severity,
+            len(report.inline_suggestions),
+            report.failed,
+        )
 
         return PipelineState(
             payload=state.payload,
@@ -409,6 +448,10 @@ class AnalysisNode(Node):
             fan_n=state.fan_n,
             fan_i=state.fan_i,
         )
+
+
+def _run_key(ctx: Any) -> str:
+    return f"{ctx.repo}:{ctx.pr_number}"
 
 
 # ---------------------------------------------------------------------------
