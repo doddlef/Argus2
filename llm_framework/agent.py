@@ -36,12 +36,20 @@ class Agent:
         history = list(messages)  # local copy — caller's list is never mutated (W08)
         tools = list(self._tool_index.values())
 
-        for _ in range(self._max_iterations):
+        for i in range(self._max_iterations):
+            logger.info("agent iteration=%d/%d tool_count=%d", i + 1, self._max_iterations, len(tools))
             response = await self._client.complete(
                 history, tools, self._system, self._options
             )
+            logger.debug(
+                "agent response stop_reason=%s tool_calls=%d content=%r",
+                response.stop_reason,
+                len(response.tool_calls),
+                _truncate(response.content),
+            )
 
             if not response.has_tool_calls:
+                logger.info("agent completed without tool calls")
                 return response
 
             history.append(response.to_message())
@@ -49,6 +57,7 @@ class Agent:
             results: list[ToolResult] = list(
                 await asyncio.gather(*[self._call_tool(c) for c in response.tool_calls])
             )
+            logger.info("agent tool batch completed count=%d", len(results))
             history.append(Message.from_tool_results(results))
 
         # Exhausted iterations — strip tools to force a coherent text response
@@ -70,8 +79,18 @@ class Agent:
                 is_error=True,
             )
         try:
+            logger.debug("agent tool call name=%s args=%r", call.name, call.arguments)
             content = await tool.process(call.arguments)
+            logger.debug("agent tool result name=%s content=%r", call.name, _truncate(content))
             return ToolResult(id=call.id, content=content)
         except Exception as exc:
             logger.warning("Tool %r raised: %s", call.name, exc)
             return ToolResult(id=call.id, content=str(exc), is_error=True)
+
+
+def _truncate(value: str | None, limit: int = 200) -> str | None:
+    if value is None:
+        return None
+    if len(value) <= limit:
+        return value
+    return value[:limit] + "...<truncated>"

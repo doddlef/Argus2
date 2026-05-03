@@ -221,3 +221,13 @@ __marimo__/
 
 # Project Scope
 ignore*
+
+# configuration
+config.argus.toml
+.env
+
+# database
+/db
+
+# wiki
+/wiki
