@@ -67,7 +67,10 @@ def build_trigger(
         )
         if translation.kind == "pr_opened":
             return PROpenedTrigger(**common)
-        return PRSyncTrigger(**common)
+        return PRSyncTrigger(
+            **common,
+            before_sha=str(payload.get("before") or "") or None,
+        )
 
     # comment
     if "pull_request" in payload:
@@ -95,4 +98,3 @@ def build_trigger(
 
 def _author_login(comment: dict) -> str:
     return comment.get("user", {}).get("login", "")
-

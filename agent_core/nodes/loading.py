@@ -15,6 +15,7 @@ Failure policy:
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,14 +41,29 @@ class PRLoadNode(Node):
         logger.info("%s node=PRLoad start", key)
         commits = await ctx.reader.fetch_commits(ctx.pr_number)
         changed_files = await ctx.reader.fetch_changed_files(ctx.pr_number)
+        sync_changed_files = []
+        if ctx.before_sha and ctx.before_sha != ctx.commit_sha:
+            try:
+                sync_changed_files = await ctx.reader.fetch_changed_files_since(
+                    ctx.before_sha,
+                    ctx.commit_sha,
+                )
+            except Exception as exc:
+                logger.warning("PRLoad sync delta fetch failed: %s", exc)
         logger.info(
-            "%s node=PRLoad done commits=%d changed_files=%d",
+            "%s node=PRLoad done commits=%d changed_files=%d sync_changed_files=%d",
             key,
             len(commits),
             len(changed_files),
+            len(sync_changed_files),
         )
         return PipelineState(
-            payload=PipelinePayload(commits=commits, changed_files=changed_files),
+            payload=PipelinePayload(
+                commits=commits,
+                changed_files=changed_files,
+                sync_base_sha=ctx.before_sha,
+                sync_changed_files=sync_changed_files,
+            ),
             data=None,
         )
 
@@ -111,6 +127,191 @@ class MemLoadNode(Node):
 
 def _read_optional(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+# ---------------------------------------------------------------------------
+# StructureSync
+# ---------------------------------------------------------------------------
+
+_STRUCTURE_REQUIRED_HEADERS = [
+    "## Modules",
+    "## Runtime Flow",
+    "## Conventions",
+    "## Observed Paths (auto-generated, truncated)",
+    "## Last Updated",
+]
+
+
+class StructureSyncNode(Node):
+    """Bootstraps/self-heals structure.md and refreshes auto-generated sections."""
+
+    def __init__(
+        self,
+        wiki_root: Path,
+        enabled: bool = False,
+        max_modules: int = 6,
+        max_paths: int = 200,
+        max_chars: int = 16_384,
+    ) -> None:
+        self._wiki_root = wiki_root
+        self._enabled = enabled
+        self._max_modules = max_modules
+        self._max_paths = max_paths
+        self._max_chars = max_chars
+
+    async def execute(self, state: PipelineState[None]) -> PipelineState[None]:
+        if not self._enabled:
+            return state
+        ctx = get_session()
+        key = _run_key(ctx)
+        owner, repo_name = ctx.repo.split("/", 1)
+        project = self._wiki_root / "argus" / owner / repo_name
+        structure_path = project / "structure.md"
+
+        paths = state.payload.file_tree.paths if state.payload.file_tree else []
+        modules = _derive_modules(paths, self._max_modules)
+        observed = sorted(paths)[: self._max_paths]
+
+        existing = _read_optional(structure_path)
+        if not existing:
+            content = _render_structure_template(modules, observed, ctx.commit_sha)
+            structure_path.parent.mkdir(parents=True, exist_ok=True)
+            structure_path.write_text(_trim_structure(content, self._max_chars), encoding="utf-8")
+            state.payload.wiki_structure = structure_path.read_text(encoding="utf-8")
+            logger.info("%s node=StructureSync done action=bootstrap modules=%d paths=%d", key, len(modules), len(observed))
+            return state
+
+        sections = _parse_structure_sections(existing)
+        healed = False
+        for header in _STRUCTURE_REQUIRED_HEADERS:
+            if header not in sections:
+                sections[header] = _default_section_body(header, modules)
+                healed = True
+
+        sections["## Observed Paths (auto-generated, truncated)"] = _render_observed_paths(observed)
+        sections["## Last Updated"] = _render_last_updated(ctx.commit_sha)
+
+        updated = _render_structure_from_sections(sections)
+        updated = _trim_structure(updated, self._max_chars)
+        structure_path.parent.mkdir(parents=True, exist_ok=True)
+        structure_path.write_text(updated, encoding="utf-8")
+        state.payload.wiki_structure = updated
+        logger.info(
+            "%s node=StructureSync done action=refresh healed=%s modules=%d paths=%d",
+            key,
+            healed,
+            len(modules),
+            len(observed),
+        )
+        return state
+
+
+def _derive_modules(paths: list[str], limit: int) -> list[str]:
+    prefixes = sorted({p.split("/", 1)[0] for p in paths if p and "/" in p})
+    return prefixes[:limit]
+
+
+def _render_structure_template(modules: list[str], observed_paths: list[str], commit_sha: str) -> str:
+    module_lines = [f"- `{m}`: TODO describe responsibility and key files." for m in modules]
+    if not module_lines:
+        module_lines = ["- `core`: TODO describe repository modules."]
+    return "\n".join(
+        [
+            "# Codebase Structure",
+            "",
+            "## Modules",
+            *module_lines,
+            "",
+            "## Runtime Flow",
+            "- TODO describe runtime flow and major data/control transitions.",
+            "",
+            "## Conventions",
+            "- TODO describe coding patterns, constraints, and review hotspots.",
+            "",
+            "## Observed Paths (auto-generated, truncated)",
+            _render_observed_paths(observed_paths),
+            "",
+            "## Last Updated",
+            _render_last_updated(commit_sha),
+            "",
+        ]
+    )
+
+
+def _parse_structure_sections(content: str) -> dict[str, str]:
+    lines = content.splitlines()
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines:
+        if line.startswith("## "):
+            current = line.strip()
+            sections.setdefault(current, [])
+            continue
+        if current is None:
+            continue
+        sections[current].append(line)
+    return {k: "\n".join(v).strip() for k, v in sections.items()}
+
+
+def _default_section_body(header: str, modules: list[str]) -> str:
+    if header == "## Modules":
+        return "\n".join(f"- `{m}`: TODO describe responsibility and key files." for m in modules) or "- `core`: TODO describe repository modules."
+    if header == "## Runtime Flow":
+        return "- TODO describe runtime flow and major data/control transitions."
+    if header == "## Conventions":
+        return "- TODO describe coding patterns, constraints, and review hotspots."
+    if header == "## Observed Paths (auto-generated, truncated)":
+        return ""
+    if header == "## Last Updated":
+        return ""
+    return ""
+
+
+def _render_observed_paths(paths: list[str]) -> str:
+    if not paths:
+        return "- (none)"
+    return "\n".join(f"- `{p}`" for p in paths)
+
+
+def _render_last_updated(commit_sha: str) -> str:
+    ts = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    short_sha = commit_sha[:12]
+    return f"- commit_sha: `{short_sha}`\n- generated_at: `{ts}`"
+
+
+def _render_structure_from_sections(sections: dict[str, str]) -> str:
+    out = ["# Codebase Structure", ""]
+    # Required sections first, preserving stable order.
+    for header in _STRUCTURE_REQUIRED_HEADERS:
+        out.append(header)
+        body = sections.get(header, "")
+        out.append(body)
+        out.append("")
+
+    # Preserve custom sections.
+    for header, body in sections.items():
+        if header in _STRUCTURE_REQUIRED_HEADERS:
+            continue
+        out.append(header)
+        out.append(body)
+        out.append("")
+    return "\n".join(out).strip() + "\n"
+
+
+def _trim_structure(content: str, max_chars: int) -> str:
+    if len(content) <= max_chars:
+        return content
+    # Trim only observed-path rows first.
+    sections = _parse_structure_sections(content)
+    observed = sections.get("## Observed Paths (auto-generated, truncated)", "")
+    lines = observed.splitlines()
+    while len(content) > max_chars and lines:
+        lines.pop()
+        sections["## Observed Paths (auto-generated, truncated)"] = "\n".join(lines)
+        content = _render_structure_from_sections(sections)
+    if len(content) <= max_chars:
+        return content
+    return content[:max_chars].rstrip() + "\n"
 
 
 # ---------------------------------------------------------------------------

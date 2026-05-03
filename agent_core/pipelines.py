@@ -18,6 +18,7 @@ from .nodes.loading import (
     AcknowledgeNode,
     MemLoadNode,
     PRLoadNode,
+    StructureSyncNode,
     ThreadLoadNode,
     TreeLoadNode,
 )
@@ -34,8 +35,12 @@ def build_pr_workflow(app_ctx: ApplicationContext) -> Workflow:
     # Loading phase
     prload = PRLoadNode()
     acknowledge = AcknowledgeNode(message=_ACK_PR, enabled=cfg.acknowledge_events)
-    memload = MemLoadNode(app_ctx.wiki_root)
     treeload = TreeLoadNode()
+    structure_sync = StructureSyncNode(
+        wiki_root=app_ctx.wiki_root,
+        enabled=cfg.structure_sync_enabled,
+    )
+    memload = MemLoadNode(app_ctx.wiki_root)
     threadload = ThreadLoadNode(
         wiki_root=app_ctx.wiki_root,
         fast_client=app_ctx.clients.fast,
@@ -80,9 +85,10 @@ def build_pr_workflow(app_ctx: ApplicationContext) -> Workflow:
         entry=prload,
         edges={
             prload:     DirectedEdge(acknowledge),
-            acknowledge: DirectedEdge(memload),
-            memload:    DirectedEdge(treeload),
-            treeload:   DirectedEdge(threadload),
+            acknowledge: DirectedEdge(treeload),
+            treeload:   DirectedEdge(structure_sync),
+            structure_sync: DirectedEdge(memload),
+            memload:    DirectedEdge(threadload),
             threadload: DirectedEdge(triage),
             triage:     ConditionalEdge(_after_triage),
             pass_node:  PipelineStateFanOutEdge(analysis),
@@ -102,8 +108,12 @@ def build_comment_workflow(
     # Loading phase
     prload = PRLoadNode()
     acknowledge = AcknowledgeNode(message=_ACK_COMMENT, enabled=cfg.acknowledge_events)
-    memload = MemLoadNode(app_ctx.wiki_root)
     treeload = TreeLoadNode()
+    structure_sync = StructureSyncNode(
+        wiki_root=app_ctx.wiki_root,
+        enabled=cfg.structure_sync_enabled,
+    )
+    memload = MemLoadNode(app_ctx.wiki_root)
     threadload = ThreadLoadNode(
         wiki_root=app_ctx.wiki_root,
         fast_client=app_ctx.clients.fast,
@@ -163,9 +173,10 @@ def build_comment_workflow(
         entry=prload,
         edges={
             prload:      DirectedEdge(acknowledge),
-            acknowledge: DirectedEdge(memload),
-            memload:     DirectedEdge(treeload),
-            treeload:    DirectedEdge(threadload),
+            acknowledge: DirectedEdge(treeload),
+            treeload:    DirectedEdge(structure_sync),
+            structure_sync: DirectedEdge(memload),
+            memload:     DirectedEdge(threadload),
             threadload:  DirectedEdge(route),
             route:       ConditionalEdge(_after_route),
             # conversation: terminal

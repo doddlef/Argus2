@@ -150,6 +150,13 @@ def test_toml_bool_false_not_overridden_by_default(required_env, tmp_path):
     assert cfg.acknowledge_events is False
 
 
+def test_structure_sync_flag_from_toml(required_env, tmp_path):
+    toml_path = tmp_path / "config.toml"
+    toml_path.write_bytes(b"[argus]\nstructure_sync_enabled = true\n")
+    cfg = load_config(toml_path)
+    assert cfg.structure_sync_enabled is True
+
+
 # ---------------------------------------------------------------------------
 # Client defaults
 # ---------------------------------------------------------------------------

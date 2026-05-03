@@ -20,6 +20,7 @@ WikiMerge scans tmp/ recursively for matching files and applies them to canonica
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Tuple
 
@@ -283,6 +284,72 @@ class _WrappedMemAppendTool(BoundTool):
         return f"Staged append to {path}."
 
 
+_STRUCTURE_UPSERT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "module": {
+            "type": "string",
+            "description": "Canonical module key as repo path prefix (e.g., 'agent_core' or 'agent_core/nodes').",
+        },
+        "description": {
+            "type": "string",
+            "description": "Concise module description for structure.md.",
+        },
+        "evidence_paths": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Concrete repository paths supporting this description.",
+        },
+    },
+    "required": ["module", "description", "evidence_paths"],
+}
+
+
+class _StructureUpsertTool(BoundTool):
+    """Stages structure module upserts as JSON operation files."""
+
+    def __init__(self, wiki_root: Path, pr_number: int, run_id: str) -> None:
+        super().__init__(
+            name="structure_upsert",
+            description=(
+                "Stage an update to structure.md module descriptions. "
+                "Use module keys as repo path prefixes and include concrete evidence_paths."
+            ),
+            schema=_STRUCTURE_UPSERT_SCHEMA,
+        )
+        self._wiki_root = wiki_root
+        self._pr_number = pr_number
+        self._run_id = run_id
+
+    async def process(self, arguments: dict) -> str:
+        module = str(arguments.get("module", "")).strip().strip("/")
+        description = str(arguments.get("description", "")).strip()
+        evidence_paths = arguments.get("evidence_paths", [])
+
+        if not module:
+            return "Error: module is required."
+        if "/" in module and any(part in {"", ".", ".."} for part in module.split("/")):
+            return "Error: invalid module path."
+        if not description:
+            return "Error: description is required."
+        if not isinstance(evidence_paths, list) or not evidence_paths or not all(isinstance(p, str) and p for p in evidence_paths):
+            return "Error: evidence_paths must be a non-empty list of paths."
+
+        project = _project_root(self._wiki_root)
+        tmp_dir = project / "tmp" / f"pr{self._pr_number}-{self._run_id}" / "structure_ops"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        op = {
+            "type": "structure_upsert",
+            "module": module,
+            "description": description,
+            "evidence_paths": evidence_paths,
+            "run_id": self._run_id,
+        }
+        filename = f"{module.replace('/', '__')}-{len(list(tmp_dir.glob('*.json'))):04d}.json"
+        (tmp_dir / filename).write_text(json.dumps(op, ensure_ascii=True, sort_keys=True), encoding="utf-8")
+        return f"Staged structure upsert for {module}."
+
+
 # ---------------------------------------------------------------------------
 # Factories
 # ---------------------------------------------------------------------------
@@ -311,4 +378,5 @@ def make_analysis_memory_tools(
         _MemReadTool(wiki_root),
         _WrappedMemWriteTool(wiki_root, pr_number, run_id),
         _WrappedMemAppendTool(wiki_root, pr_number, run_id),
+        _StructureUpsertTool(wiki_root, pr_number, run_id),
     ]

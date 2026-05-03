@@ -38,6 +38,7 @@ class PRSyncTrigger:
     repo:            str
     pr_number:       int
     commit_sha:      str
+    before_sha:      str | None
     actor:           str
     reader:          CodeReader
     commenter:       Commenter
@@ -104,6 +105,7 @@ class Dispatcher:
                 repo=trigger.repo,
                 pr_number=trigger.pr_number,
                 commit_sha=trigger.commit_sha,
+                before_sha=getattr(trigger, "before_sha", None),
                 actor=trigger.actor,
                 reader=trigger.reader,
                 commenter=trigger.commenter,
