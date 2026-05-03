@@ -89,6 +89,9 @@ class MockReader(CodeReader):
     async def fetch_changed_files(self, pr_number: int) -> list[ChangedFile]:
         return [ChangedFile(path="src/auth.py", status="modified", additions=10, deletions=2)]
 
+    async def fetch_changed_files_since(self, base_sha: str, head_sha: str) -> list[ChangedFile]:
+        return [ChangedFile(path="src/auth.py", status="modified", additions=2, deletions=1)]
+
     async def fetch_diff(self, pr_number: int, path: str) -> str:
         return f"--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-old\n+new"
 
@@ -470,6 +473,7 @@ async def test_memory_tools_reject_path_escape(tmp_path):
         repo=trigger.repo,
         pr_number=trigger.pr_number,
         commit_sha=trigger.commit_sha,
+        before_sha=None,
         actor=trigger.actor,
         reader=trigger.reader,
         commenter=trigger.commenter,
@@ -492,6 +496,7 @@ async def test_analysis_memory_tools_reject_path_escape(tmp_path):
         repo=trigger.repo,
         pr_number=trigger.pr_number,
         commit_sha=trigger.commit_sha,
+        before_sha=None,
         actor=trigger.actor,
         reader=trigger.reader,
         commenter=trigger.commenter,
@@ -539,6 +544,7 @@ async def test_structure_sync_bootstraps_structure_md(tmp_path):
         repo=trigger.repo,
         pr_number=trigger.pr_number,
         commit_sha=trigger.commit_sha,
+        before_sha=None,
         actor=trigger.actor,
         reader=trigger.reader,
         commenter=trigger.commenter,
@@ -570,6 +576,7 @@ async def test_analysis_structure_upsert_is_staged_and_merged(tmp_path):
         repo=trigger.repo,
         pr_number=trigger.pr_number,
         commit_sha=trigger.commit_sha,
+        before_sha=None,
         actor=trigger.actor,
         reader=trigger.reader,
         commenter=trigger.commenter,

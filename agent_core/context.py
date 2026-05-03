@@ -55,6 +55,8 @@ class PipelinePayload:
 
     commits: list[Commit] = field(default_factory=list)
     changed_files: list[ChangedFile] = field(default_factory=list)
+    sync_base_sha: str | None = None
+    sync_changed_files: list[ChangedFile] = field(default_factory=list)
     wiki_index: str = ""
     wiki_structure: str = ""
     file_tree: FileTree | None = None
@@ -88,6 +90,7 @@ class SessionContext:
     repo: str           # "owner/repo"
     pr_number: int
     commit_sha: str
+    before_sha: str | None
     actor: str          # GitHub user who triggered the event
     reader: CodeReader
     commenter: Commenter

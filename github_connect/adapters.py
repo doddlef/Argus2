@@ -100,6 +100,32 @@ class GitHubCodeReader(CodeReader):
             )
         return out
 
+    async def fetch_changed_files_since(self, base_sha: str, head_sha: str) -> list[ChangedFile]:
+        data = await self._api.get_json(
+            self._installation_id,
+            f"/repos/{self._repo}/compare/{base_sha}...{head_sha}",
+            params={"per_page": 100, "page": 1},
+        )
+        rows = data.get("files", []) if isinstance(data, dict) else []
+        out: list[ChangedFile] = []
+        for f in rows[: self._file_cap]:
+            status = f.get("status", "modified")
+            if status not in {"added", "modified", "deleted"}:
+                status = "modified"
+            out.append(
+                ChangedFile(
+                    path=f["filename"],
+                    status=status,  # type: ignore[arg-type]
+                    additions=int(f.get("additions", 0)),
+                    deletions=int(f.get("deletions", 0)),
+                )
+            )
+        if len(rows) >= self._file_cap:
+            self._state.warnings.append(
+                f"Sync delta files truncated at {self._file_cap}; incremental review coverage may be partial."
+            )
+        return out
+
     async def fetch_diff(self, pr_number: int, path: str) -> str:
         page = 1
         while page <= self._page_cap:
@@ -150,11 +176,14 @@ class GitHubCodeReader(CodeReader):
         return paths
 
     async def fetch_comments(self, pr_number: int, after: str | None = None) -> list[Comment]:
-        issue_comments = await self._api.get_json(
-            self._installation_id, f"/repos/{self._repo}/issues/{pr_number}/comments", params={"per_page": 100, "page": 1}
+        issue_comments = await self._get_paginated(
+            f"/repos/{self._repo}/issues/{pr_number}/comments"
         )
-        review_comments = await self._api.get_json(
-            self._installation_id, f"/repos/{self._repo}/pulls/{pr_number}/comments", params={"per_page": 100, "page": 1}
+        review_comments = await self._get_paginated(
+            f"/repos/{self._repo}/pulls/{pr_number}/comments"
+        )
+        reviews = await self._get_paginated(
+            f"/repos/{self._repo}/pulls/{pr_number}/reviews"
         )
         merged = [
             Comment(
@@ -176,6 +205,17 @@ class GitHubCodeReader(CodeReader):
                 position=c.get("position"),
             )
             for c in review_comments
+        ] + [
+            Comment(
+                id=str(c["id"]),
+                author=c["user"]["login"],
+                body=c.get("body", ""),
+                created_at=c.get("submitted_at") or c.get("created_at", ""),
+                is_inline=False,
+                position=None,
+            )
+            for c in reviews
+            if c.get("submitted_at")
         ]
         merged.sort(key=lambda c: c.created_at)
         if not after:
@@ -184,6 +224,27 @@ class GitHubCodeReader(CodeReader):
         if idx == -1:
             return merged
         return merged[idx + 1 :]
+
+    async def _get_paginated(self, path: str) -> list[dict]:
+        out: list[dict] = []
+        per_page = 100
+        page = 1
+        while page <= self._page_cap:
+            rows = await self._api.get_json(
+                self._installation_id,
+                path,
+                params={"per_page": per_page, "page": page},
+            )
+            if not rows:
+                break
+            if isinstance(rows, list):
+                out.extend(rows)
+                if len(rows) < per_page:
+                    break
+            else:
+                break
+            page += 1
+        return out
 
 
 class GitHubCommenter(Commenter):

@@ -41,14 +41,29 @@ class PRLoadNode(Node):
         logger.info("%s node=PRLoad start", key)
         commits = await ctx.reader.fetch_commits(ctx.pr_number)
         changed_files = await ctx.reader.fetch_changed_files(ctx.pr_number)
+        sync_changed_files = []
+        if ctx.before_sha and ctx.before_sha != ctx.commit_sha:
+            try:
+                sync_changed_files = await ctx.reader.fetch_changed_files_since(
+                    ctx.before_sha,
+                    ctx.commit_sha,
+                )
+            except Exception as exc:
+                logger.warning("PRLoad sync delta fetch failed: %s", exc)
         logger.info(
-            "%s node=PRLoad done commits=%d changed_files=%d",
+            "%s node=PRLoad done commits=%d changed_files=%d sync_changed_files=%d",
             key,
             len(commits),
             len(changed_files),
+            len(sync_changed_files),
         )
         return PipelineState(
-            payload=PipelinePayload(commits=commits, changed_files=changed_files),
+            payload=PipelinePayload(
+                commits=commits,
+                changed_files=changed_files,
+                sync_base_sha=ctx.before_sha,
+                sync_changed_files=sync_changed_files,
+            ),
             data=None,
         )
 

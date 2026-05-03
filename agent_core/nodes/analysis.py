@@ -85,7 +85,9 @@ Workflow:
 3. Consult the memory wiki for relevant codebase context before drawing conclusions.
 4. Write memory wiki observations only when you discover something a future reviewer could not
    re-derive from the current code in 30 seconds. Skip trivial or visible-in-code facts.
-4b. When module-level architecture understanding improves, call structure_upsert(module, description, evidence_paths).
+4b. If your assigned files provide enough concrete evidence, call
+    structure_upsert(module, description, evidence_paths) to improve module descriptions.
+4c. Skip structure_upsert when evidence is weak; never guess architecture from names alone.
 5. Call submit_report as your FINAL action with all findings. Make no tool calls after it.
 
 {_WIKI_WRITE_GUIDE}
@@ -492,6 +494,19 @@ def _build_triage_prompt(metadata: Any, payload: Any, preload_threshold: int) ->
         f"## Changed Files ({len(payload.changed_files)} files) {preload_note}",
         files_text,
     ]
+    if payload.sync_base_sha and payload.sync_changed_files:
+        sync_files_text = "\n".join(
+            f"- {f.path}  [{f.status}]  +{f.additions}/-{f.deletions}"
+            for f in payload.sync_changed_files
+        )
+        sections += [
+            "",
+            f"## New Delta Since Last Sync ({len(payload.sync_changed_files)} files)",
+            f"Base: `{payload.sync_base_sha[:12]}`",
+            sync_files_text,
+            "",
+            "Prioritize this delta when deciding whether this run adds new findings or only revalidates prior conclusions.",
+        ]
 
     if payload.wiki_index:
         sections += ["", "## Wiki Index", payload.wiki_index]
@@ -602,6 +617,8 @@ def _parse_plans(raw_plans: list[dict]) -> list[Plan]:
         except Exception:
             logger.warning("Dropping malformed triage plan at index %d", i, exc_info=True)
     return plans
+
+
 
 
 def _parse_report(plan: Plan, raw: dict) -> AnalysisReport:

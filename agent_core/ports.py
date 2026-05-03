@@ -21,6 +21,13 @@ class CodeReader(ABC):
     async def fetch_changed_files(self, pr_number: int) -> list[ChangedFile]: ...
 
     @abstractmethod
+    async def fetch_changed_files_since(
+        self,
+        base_sha: str,
+        head_sha: str,
+    ) -> list[ChangedFile]: ...
+
+    @abstractmethod
     async def fetch_diff(self, pr_number: int, path: str) -> str: ...
 
     @abstractmethod

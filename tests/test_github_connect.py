@@ -34,6 +34,9 @@ class _NoopReader(CodeReader):
     async def fetch_changed_files(self, pr_number: int):
         return []
 
+    async def fetch_changed_files_since(self, base_sha: str, head_sha: str):
+        return []
+
     async def fetch_diff(self, pr_number: int, path: str):
         return ""
 
@@ -96,10 +99,14 @@ class FakeApi:
             return [{"id": 1, "user": {"login": "dev"}, "body": "hi", "created_at": "2020-01-01T00:00:00Z"}]
         if path.endswith("/pulls/1/comments"):
             return [{"id": 2, "user": {"login": "dev2"}, "body": "yo", "created_at": "2020-01-01T00:00:01Z", "position": 3}]
+        if path.endswith("/pulls/1/reviews"):
+            return [{"id": 3, "user": {"login": "argus-bot"}, "body": "review body", "submitted_at": "2020-01-01T00:00:02Z"}]
         if "/contents/" in path:
             return {"content": base64.b64encode(b"print('x')\n").decode("utf-8")}
         if "/git/trees/" in path:
             return {"tree": [{"path": "a.py", "type": "blob"}, {"path": "dir", "type": "tree"}]}
+        if "/compare/" in path:
+            return {"files": [{"filename": "b.py", "status": "modified", "additions": 2, "deletions": 1}]}
         return []
 
     async def post_json(self, installation_id, path, json=None):
@@ -141,6 +148,25 @@ def test_build_trigger_pr_opened():
     assert trig.pr_number == 1
 
 
+def test_build_trigger_pr_sync_includes_before_sha():
+    payload = {
+        "installation": {"id": 1},
+        "repository": {"full_name": "o/r"},
+        "pull_request": {"number": 1, "head": {"sha": "def"}},
+        "before": "abc",
+        "sender": {"login": "dev"},
+    }
+    trig = build_trigger(
+        translation=translate_event(event="pull_request", payload={"action": "synchronize"}, bot_username="argus-bot"),
+        payload=payload,
+        reader=_NoopReader(),
+        commenter=_NoopCommenter(),
+    )
+    assert trig is not None
+    assert trig.commit_sha == "def"
+    assert getattr(trig, "before_sha", None) == "abc"
+
+
 def test_state_store_claim_and_skip(tmp_path):
     store = StateStore(tmp_path / "state.db")
     first = store.claim_or_skip(delivery_id="d1", event="pull_request", installation_id=1, repo="o/r")
@@ -171,9 +197,17 @@ def test_adapter_reader_fetch_comments_merge_and_after():
     reader = GitHubCodeReader(api, 1, "o/r")
     import asyncio
     comments = asyncio.run(reader.fetch_comments(1))
-    assert [c.id for c in comments] == ["1", "2"]
+    assert [c.id for c in comments] == ["1", "2", "3"]
     newer = asyncio.run(reader.fetch_comments(1, after="1"))
-    assert [c.id for c in newer] == ["2"]
+    assert [c.id for c in newer] == ["2", "3"]
+
+
+def test_adapter_reader_fetch_changed_files_since_compare():
+    api = FakeApi()
+    reader = GitHubCodeReader(api, 1, "o/r")
+    import asyncio
+    changed = asyncio.run(reader.fetch_changed_files_since("abc", "def"))
+    assert [f.path for f in changed] == ["b.py"]
 
 
 def test_adapter_reader_fetch_diff_paginates_and_caches():
