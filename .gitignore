@@ -221,3 +221,6 @@ __marimo__/
 
 # Project Scope
 ignore*
+
+# configuration
+config.argus.toml

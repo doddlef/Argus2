@@ -1,0 +1,31 @@
+[argus]
+wiki_root = ""
+bot_username = ""
+review_drafts = false
+acknowledge_events = true
+
+[clients.fast]
+provider = "openrouter"
+model = ""
+api_key = ""
+
+[clients.standard]
+provider = "openrouter"
+model = ""
+api_key = ""
+
+[clients.deep]
+provider = "openrouter"
+model = ""
+api_key = ""
+
+[limits]
+max_plans = 5
+max_inline_suggestions = 10
+max_search_results = 20
+max_file_window_lines = 200
+thread_compact_threshold = 10
+preload_diff_threshold = 300
+
+[review]
+verdict_threshold = "high"

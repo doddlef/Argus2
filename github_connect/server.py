@@ -7,7 +7,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request # type: ignore
 
 from agent_core.dispatcher import Dispatcher
 

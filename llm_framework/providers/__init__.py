@@ -6,6 +6,7 @@ any provider SDK to be installed. The ImportError is raised at instantiation.
 
 from .anthropic import AnthropicClient
 from .mock import MockLLMClient
+from .openrouter import OpenRouterClient
 from .ollama import OllamaClient
 
-__all__ = ["AnthropicClient", "OllamaClient", "MockLLMClient"]
+__all__ = ["AnthropicClient", "OllamaClient", "OpenRouterClient", "MockLLMClient"]
