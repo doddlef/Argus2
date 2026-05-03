@@ -60,6 +60,14 @@ The existing content of each target page has been pre-loaded in the initial mess
 You do NOT need to call memory_read for the target pages listed there.
 Use memory_read only if you need to consult a related wiki page not listed below.
 
+Structure handling:
+- `structure.md` semantic module updates are staged as structured `structure_upsert` ops
+  and applied outside this tool loop.
+- Do not rewrite architecture guidance in `structure.md` via memory_write/memory_append
+  unless explicitly required for non-structured recovery.
+- Preserve human-authored architecture sections (`Modules`, `Runtime Flow`,
+  `Conventions`) as stable guidance.
+
 Process for each target page:
 1. Read the pre-loaded existing content and all staged operations for that page.
 2. Merge: combine insights, resolve contradictions, drop stale items.
