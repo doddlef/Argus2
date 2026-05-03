@@ -31,6 +31,7 @@ class GitHubCodeReader(CodeReader):
         self._file_cap = file_cap
         self._file_cache: dict[tuple[str, str], str] = {}
         self._tree_cache: dict[str, list[str]] = {}
+        self._pr_files_page_cache: dict[tuple[int, int], list[dict]] = {}
         self._state = ReaderRunState(warnings=[])
 
     async def fetch_pr_metadata(self, pr_number: int) -> PRMetadata:
@@ -100,12 +101,26 @@ class GitHubCodeReader(CodeReader):
         return out
 
     async def fetch_diff(self, pr_number: int, path: str) -> str:
-        rows = await self._api.get_json(
-            self._installation_id, f"/repos/{self._repo}/pulls/{pr_number}/files", params={"per_page": 100, "page": 1}
-        )
-        for row in rows:
-            if row.get("filename") == path:
-                return row.get("patch", "")
+        page = 1
+        while page <= self._page_cap:
+            cache_key = (pr_number, page)
+            rows = self._pr_files_page_cache.get(cache_key)
+            if rows is None:
+                rows = await self._api.get_json(
+                    self._installation_id,
+                    f"/repos/{self._repo}/pulls/{pr_number}/files",
+                    params={"per_page": 100, "page": page},
+                )
+                self._pr_files_page_cache[cache_key] = rows
+
+            if not rows:
+                break
+
+            for row in rows:
+                if row.get("filename") == path:
+                    return row.get("patch", "")
+
+            page += 1
         return ""
 
     async def fetch_file(self, path: str, ref: str) -> str:
@@ -225,4 +240,3 @@ def _to_review_comment(c: InlineComment) -> dict:
         "line": c.end_line,
         "side": "RIGHT",
     }
-

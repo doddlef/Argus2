@@ -228,3 +228,6 @@ config.argus.toml
 
 # database
 /db
+
+# wiki
+/wiki

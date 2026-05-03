@@ -172,6 +172,33 @@ def test_adapter_reader_fetch_comments_merge_and_after():
     assert [c.id for c in newer] == ["2"]
 
 
+def test_adapter_reader_fetch_diff_paginates_and_caches():
+    class PagedApi(FakeApi):
+        async def get_json(self, installation_id, path, params=None):
+            self.gets.append((path, params))
+            if path.endswith("/pulls/1/files"):
+                page = (params or {}).get("page", 1)
+                if page == 1:
+                    return [{"filename": "a.py", "patch": "@@ -1 +1 @@"}]
+                if page == 2:
+                    return [{"filename": "b.py", "patch": "@@ -2 +2 @@"}]
+                return []
+            return await super().get_json(installation_id, path, params)
+
+    api = PagedApi()
+    reader = GitHubCodeReader(api, 1, "o/r", page_cap=5)
+    import asyncio
+
+    diff = asyncio.run(reader.fetch_diff(1, "b.py"))
+    assert diff == "@@ -2 +2 @@"
+
+    before = len([c for c in api.gets if c[0].endswith("/pulls/1/files")])
+    diff_again = asyncio.run(reader.fetch_diff(1, "b.py"))
+    after = len([c for c in api.gets if c[0].endswith("/pulls/1/files")])
+    assert diff_again == "@@ -2 +2 @@"
+    assert after == before
+
+
 def test_inline_mapping_range_and_single():
     single = _to_review_comment(InlineComment(path="x.py", start_line=4, end_line=4, body="a"))
     assert single["line"] == 4 and single["side"] == "RIGHT"
@@ -230,4 +257,3 @@ def test_webhook_bad_signature_401(tmp_path):
         },
     )
     assert r.status_code == 401
-
