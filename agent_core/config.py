@@ -50,6 +50,7 @@ class ArgusConfig:
     # [argus] optional
     review_drafts:      bool = False
     acknowledge_events: bool = True
+    structure_sync_enabled: bool = False
 
     # [limits] optional
     max_plans:                int = 5
@@ -109,6 +110,8 @@ def load_config(path: Path | None = None) -> ArgusConfig:
                         False, cast=_to_bool),
         acknowledge_events=r("argus", "acknowledge_events", "ARGUS_ACKNOWLEDGE_EVENTS",
                              True, cast=_to_bool),
+        structure_sync_enabled=r("argus", "structure_sync_enabled", "ARGUS_STRUCTURE_SYNC_ENABLED",
+                                 False, cast=_to_bool),
         max_plans=r("limits", "max_plans", "ARGUS_MAX_PLANS",
                     5, cast=int),
         max_inline_suggestions=r("limits", "max_inline_suggestions", "ARGUS_MAX_INLINE_SUGGESTIONS",

@@ -26,7 +26,7 @@ from agent_core.context import (
     session,
 )
 from agent_core.dispatcher import CommentReceivedTrigger, Dispatcher, PROpenedTrigger
-from agent_core.domain import ChangedFile, Commit, Comment, InlineComment, PRMetadata
+from agent_core.domain import ChangedFile, Commit, Comment, FileTree, InlineComment, PRMetadata
 from agent_core.edges import PassThroughNode, PipelineStateFanOutEdge, PipelineStateJoinEdge
 from agent_core.nodes.analysis import AnalysisNode, RouteNode, TriageNode
 from agent_core.nodes.conversation import ConversationNode
@@ -35,6 +35,7 @@ from agent_core.nodes.loading import (
     AcknowledgeNode,
     MemLoadNode,
     PRLoadNode,
+    StructureSyncNode,
     ThreadLoadNode,
     TreeLoadNode,
 )
@@ -247,7 +248,7 @@ def test_pr_workflow_contains_all_expected_node_types(tmp_path):
     wf = build_pr_workflow(_wiring_app_ctx(tmp_path))
     types = {type(n) for n in wf.edges}
     assert types >= {
-        PRLoadNode, AcknowledgeNode, MemLoadNode, TreeLoadNode, ThreadLoadNode,
+        PRLoadNode, AcknowledgeNode, MemLoadNode, TreeLoadNode, StructureSyncNode, ThreadLoadNode,
         TriageNode, PassThroughNode, AnalysisNode, SummaryNode,
     }
 
@@ -526,3 +527,72 @@ async def test_pr_lock_manager_evicts_released_lock():
     async with mgr(1, 1):
         assert (1, 1) in mgr._locks
     assert (1, 1) not in mgr._locks
+
+
+async def test_structure_sync_bootstraps_structure_md(tmp_path):
+    from agent_core.nodes.loading import StructureSyncNode
+
+    commenter = MockCommenter()
+    trigger = _pr_trigger(commenter, tmp_path)
+    ctx = SessionContext(
+        installation_id=trigger.installation_id,
+        repo=trigger.repo,
+        pr_number=trigger.pr_number,
+        commit_sha=trigger.commit_sha,
+        actor=trigger.actor,
+        reader=trigger.reader,
+        commenter=trigger.commenter,
+        metadata=await trigger.reader.fetch_pr_metadata(trigger.pr_number),
+    )
+    paths = await trigger.reader.fetch_tree("abc1234")
+    state = PipelineState(payload=PipelinePayload(file_tree=FileTree(paths=paths, rendered="")), data=None)
+
+    async with session(ctx):
+        node = StructureSyncNode(tmp_path, enabled=True)
+        out = await node.execute(state)
+
+    owner, repo_name = trigger.repo.split("/", 1)
+    p = tmp_path / "argus" / owner / repo_name / "structure.md"
+    assert p.exists()
+    text = p.read_text(encoding="utf-8")
+    assert "## Modules" in text
+    assert "## Observed Paths (auto-generated, truncated)" in text
+    assert out.payload.wiki_structure
+
+
+async def test_analysis_structure_upsert_is_staged_and_merged(tmp_path):
+    from agent_core.nodes.output import _apply_structure_upserts, _split_structure_ops
+
+    commenter = MockCommenter()
+    trigger = _pr_trigger(commenter, tmp_path)
+    ctx = SessionContext(
+        installation_id=trigger.installation_id,
+        repo=trigger.repo,
+        pr_number=trigger.pr_number,
+        commit_sha=trigger.commit_sha,
+        actor=trigger.actor,
+        reader=trigger.reader,
+        commenter=trigger.commenter,
+        metadata=await trigger.reader.fetch_pr_metadata(trigger.pr_number),
+    )
+    async with session(ctx):
+        tools = {t.name: t for t in make_analysis_memory_tools(tmp_path, 1, "runid")}
+        res = await tools["structure_upsert"].process(
+            {
+                "module": "agent_core",
+                "description": "Core pipeline orchestration and nodes.",
+                "evidence_paths": ["agent_core/pipelines.py", "agent_core/nodes/loading.py"],
+            }
+        )
+        assert "Staged structure upsert" in res
+
+    owner, repo_name = trigger.repo.split("/", 1)
+    project = tmp_path / "argus" / owner / repo_name
+    files = list((project / "tmp").glob("pr1-*/**/*"))
+    ops, _ = _split_structure_ops([f for f in files if f.is_file()])
+    assert len(ops) == 1
+
+    _apply_structure_upserts(project, ops, "abc1234")
+    structure = (project / "structure.md").read_text(encoding="utf-8")
+    assert "`agent_core`" in structure
+    assert "Core pipeline orchestration and nodes." in structure

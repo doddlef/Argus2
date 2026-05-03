@@ -40,6 +40,7 @@ This section documents each runtime parameter, what it is used for, and where it
 | `ARGUS_BOT_USERNAME` | Yes (unless in TOML) | Bot identity for self-comment filtering and behavior (`agent_core/config.py`) |
 | `ARGUS_REVIEW_DRAFTS` | No | Enable/disable review on draft PRs (bool) |
 | `ARGUS_ACKNOWLEDGE_EVENTS` | No | Enable/disable lightweight acknowledgement comments (bool) |
+| `ARGUS_STRUCTURE_SYNC_ENABLED` | No | Enable hybrid `structure.md` bootstrap/self-heal/auto-refresh (bool; default false) |
 | `ARGUS_VERDICT_THRESHOLD` | No | Minimum severity for verdict decisions (`critical/high/medium`) |
 
 ### Per-tier LLM credentials

@@ -11,6 +11,7 @@ Failure policy:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -31,6 +32,7 @@ _SEVERITY_RANK: dict[str, int] = {
 _RANK_TO_SEVERITY: dict[int, str] = {v: k for k, v in _SEVERITY_RANK.items()}
 
 _MAX_WIKI_MERGE_ITERATIONS = 20
+_STRUCTURE_PATH = "structure.md"
 
 # ---------------------------------------------------------------------------
 # System prompts
@@ -176,9 +178,19 @@ class WikiMergeNode(Node):
         owner, repo_name = ctx.repo.split("/", 1)
         project = self._wiki_root / "argus" / owner / repo_name
 
-        op_files = _scan_operation_files(project, ctx.pr_number)
-        if not op_files:
+        all_op_files = _scan_operation_files(project, ctx.pr_number)
+        if not all_op_files:
             logger.info("%s node=WikiMerge done op_files=0", key)
+            return
+
+        structure_ops, memory_ops = _split_structure_ops(all_op_files)
+        if structure_ops:
+            _apply_structure_upserts(project, structure_ops, ctx.commit_sha)
+
+        op_files = memory_ops
+        if not op_files:
+            _delete_op_files(all_op_files)
+            logger.info("%s node=WikiMerge done op_files=0 structure_ops=%d", key, len(structure_ops))
             return
 
         # Pre-load existing canonical pages so the agent skips memory_read round-trips.
@@ -215,11 +227,12 @@ class WikiMergeNode(Node):
                 )
                 history.append(Message.from_tool_results(results))
 
-            _delete_op_files(op_files)
+            _delete_op_files(all_op_files)
             logger.info(
-                "%s node=WikiMerge done op_files=%d targets=%d",
+                "%s node=WikiMerge done op_files=%d structure_ops=%d targets=%d",
                 key,
                 len(op_files),
+                len(structure_ops),
                 len(targets),
             )
 
@@ -343,6 +356,123 @@ def _scan_operation_files(project: Path, pr_number: int) -> list[Path]:
     if not tmp_dir.exists():
         return []
     return [p for p in tmp_dir.glob(f"pr{pr_number}-*/**/*") if p.is_file()]
+
+
+def _split_structure_ops(op_files: list[Path]) -> tuple[list[dict], list[Path]]:
+    structure_ops: list[dict] = []
+    memory_ops: list[Path] = []
+    for path in op_files:
+        if path.suffix != ".json":
+            memory_ops.append(path)
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("type") == "structure_upsert":
+                structure_ops.append(data)
+                continue
+        except Exception:
+            pass
+        memory_ops.append(path)
+    return structure_ops, memory_ops
+
+
+def _apply_structure_upserts(project: Path, ops: list[dict], commit_sha: str) -> None:
+    if not ops:
+        return
+    structure_path = project / _STRUCTURE_PATH
+    current = structure_path.read_text(encoding="utf-8") if structure_path.exists() else ""
+    sections = _parse_sections(current)
+
+    modules = _parse_module_entries(sections.get("## Modules", ""))
+    conflicts = 0
+    for op in ops:
+        module = str(op.get("module", "")).strip()
+        description = str(op.get("description", "")).strip()
+        if not module or not description:
+            continue
+        if module in modules:
+            conflicts += 1
+        modules[module] = description
+
+    sections["## Modules"] = _render_module_entries(modules)
+    sections["## Last Updated"] = _render_last_updated(commit_sha)
+    structure_path.parent.mkdir(parents=True, exist_ok=True)
+    structure_path.write_text(_render_sections(sections), encoding="utf-8")
+    logger.info("WikiMerge structure_upsert applied ops=%d modules=%d conflicts=%d", len(ops), len(modules), conflicts)
+
+
+def _parse_sections(content: str) -> dict[str, str]:
+    if not content.strip():
+        return {
+            "## Modules": "",
+            "## Runtime Flow": "",
+            "## Conventions": "",
+            "## Observed Paths (auto-generated, truncated)": "",
+            "## Last Updated": "",
+        }
+    lines = content.splitlines()
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines:
+        if line.startswith("## "):
+            current = line.strip()
+            sections.setdefault(current, [])
+            continue
+        if current is None:
+            continue
+        sections[current].append(line)
+    return {k: "\n".join(v).strip() for k, v in sections.items()}
+
+
+def _parse_module_entries(modules_body: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in modules_body.splitlines():
+        line = line.strip()
+        if not line.startswith("- `") or "`:" not in line:
+            continue
+        try:
+            module = line.split("`", 2)[1]
+            description = line.split("`:", 1)[1].strip()
+            if module:
+                out[module] = description
+        except Exception:
+            continue
+    return out
+
+
+def _render_module_entries(modules: dict[str, str]) -> str:
+    if not modules:
+        return "- `core`: TODO describe repository modules."
+    return "\n".join(f"- `{k}`: {modules[k]}" for k in sorted(modules.keys()))
+
+
+def _render_last_updated(commit_sha: str) -> str:
+    from datetime import UTC, datetime
+
+    ts = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return f"- commit_sha: `{commit_sha[:12]}`\n- merged_at: `{ts}`"
+
+
+def _render_sections(sections: dict[str, str]) -> str:
+    required = [
+        "## Modules",
+        "## Runtime Flow",
+        "## Conventions",
+        "## Observed Paths (auto-generated, truncated)",
+        "## Last Updated",
+    ]
+    out = ["# Codebase Structure", ""]
+    for header in required:
+        out.append(header)
+        out.append(sections.get(header, ""))
+        out.append("")
+    for header, body in sections.items():
+        if header in required:
+            continue
+        out.append(header)
+        out.append(body)
+        out.append("")
+    return "\n".join(out).strip() + "\n"
 
 
 def _build_merge_message(

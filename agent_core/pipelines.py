@@ -18,6 +18,7 @@ from .nodes.loading import (
     AcknowledgeNode,
     MemLoadNode,
     PRLoadNode,
+    StructureSyncNode,
     ThreadLoadNode,
     TreeLoadNode,
 )
@@ -36,6 +37,10 @@ def build_pr_workflow(app_ctx: ApplicationContext) -> Workflow:
     acknowledge = AcknowledgeNode(message=_ACK_PR, enabled=cfg.acknowledge_events)
     memload = MemLoadNode(app_ctx.wiki_root)
     treeload = TreeLoadNode()
+    structure_sync = StructureSyncNode(
+        wiki_root=app_ctx.wiki_root,
+        enabled=cfg.structure_sync_enabled,
+    )
     threadload = ThreadLoadNode(
         wiki_root=app_ctx.wiki_root,
         fast_client=app_ctx.clients.fast,
@@ -82,7 +87,8 @@ def build_pr_workflow(app_ctx: ApplicationContext) -> Workflow:
             prload:     DirectedEdge(acknowledge),
             acknowledge: DirectedEdge(memload),
             memload:    DirectedEdge(treeload),
-            treeload:   DirectedEdge(threadload),
+            treeload:   DirectedEdge(structure_sync),
+            structure_sync: DirectedEdge(threadload),
             threadload: DirectedEdge(triage),
             triage:     ConditionalEdge(_after_triage),
             pass_node:  PipelineStateFanOutEdge(analysis),
@@ -104,6 +110,10 @@ def build_comment_workflow(
     acknowledge = AcknowledgeNode(message=_ACK_COMMENT, enabled=cfg.acknowledge_events)
     memload = MemLoadNode(app_ctx.wiki_root)
     treeload = TreeLoadNode()
+    structure_sync = StructureSyncNode(
+        wiki_root=app_ctx.wiki_root,
+        enabled=cfg.structure_sync_enabled,
+    )
     threadload = ThreadLoadNode(
         wiki_root=app_ctx.wiki_root,
         fast_client=app_ctx.clients.fast,
@@ -165,7 +175,8 @@ def build_comment_workflow(
             prload:      DirectedEdge(acknowledge),
             acknowledge: DirectedEdge(memload),
             memload:     DirectedEdge(treeload),
-            treeload:    DirectedEdge(threadload),
+            treeload:    DirectedEdge(structure_sync),
+            structure_sync: DirectedEdge(threadload),
             threadload:  DirectedEdge(route),
             route:       ConditionalEdge(_after_route),
             # conversation: terminal

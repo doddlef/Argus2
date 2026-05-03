@@ -334,8 +334,12 @@ Filesystem-based, no embeddings, no RAG. All wiki files live under:
 Keep the always-loaded set under ~2 K tokens. `index.md` entries are one line each,
 under 150 characters: `- module-auth.md — auth module: JWT lifecycle, token refresh`.
 
-`structure.md` is created and maintained by the operator. It does not go stale
-quickly (structure changes are infrequent) and is not written by Analysis agents.
+`structure.md` follows a hybrid ownership model:
+- Human-authored sections (`Modules`, `Runtime Flow`, `Conventions`) are the primary
+  architecture guidance.
+- Automation maintains only the auto-generated paths and update metadata sections.
+- Analysis agents do not write the canonical file directly; they stage
+  `structure_upsert` proposals that are merged later by WikiMerge.
 
 ### On-demand pages (via `memory_read` tool)
 

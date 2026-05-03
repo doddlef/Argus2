@@ -56,7 +56,11 @@ class _NoopCommenter(Commenter):
 
 
 def _app_ctx(tmp_path: Path) -> ApplicationContext:
-    cfg = type("Cfg", (), {"review_drafts": False, "acknowledge_events": False})()
+    cfg = type(
+        "Cfg",
+        (),
+        {"review_drafts": False, "acknowledge_events": False, "structure_sync_enabled": False},
+    )()
     return ApplicationContext(
         clients=ClientTier(fast=_NoopClient(), standard=_NoopClient(), deep=_NoopClient()),
         wiki_root=tmp_path,
